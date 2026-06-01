@@ -272,12 +272,16 @@ def build_exe(script_path, output_name, icon_path=None):
     cmd.append(script_path)
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in iter(process.stdout.readline, ''):
+            if line: print(f"{Colors.BLUE}[PYINSTALLER]{Colors.RESET} {line.strip()}")
+        process.wait()
+        
+        if process.returncode == 0:
             log_success("Executable compiled successfully!")
             return True
         else:
-            log_error(f"Compilation failed: {result.stderr}")
+            log_error(f"Compilation failed with exit code {process.returncode}")
             return False
     except FileNotFoundError:
         log_error("PyInstaller not found!")
